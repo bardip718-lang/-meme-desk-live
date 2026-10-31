@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: meme-desk-live
+    runtime: python
+    plan: free
+    buildCommand: python -m py_compile "meme_desk_live-1 (1).py"
+    startCommand: python "meme_desk_live-1 (1).py"
+    healthCheckPath: /healthz
+    envVars:
+      - key: DESK_HOST
+        value: 0.0.0.0
+      - key: DESK_USERNAME
+        sync: false
+      - key: DESK_PASSWORD
+        sync: false
