@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+meme_desk_secrets.json
+meme_desk_config.json
+meme_desk_state.json
+paper_state.json
+*.corrupt-*
+.env
