@@ -18,7 +18,7 @@ from collections import OrderedDict, defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "3.0.0"
-HOST = os.environ.get("DESK_HOST", "127.0.0.1")
+HOST = "0.0.0.0" if "PORT" in os.environ else os.environ.get("DESK_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", os.environ.get("DESK_PORT", "8765")))
 PUBLIC_AUTH_USER = os.environ.get("DESK_USERNAME", "")
 PUBLIC_AUTH_PASSWORD = os.environ.get("DESK_PASSWORD", "")
