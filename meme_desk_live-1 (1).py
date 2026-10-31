@@ -12,14 +12,16 @@ Optional keys:   AI provider key, Solana RPC URL, CoinGecko demo key. Enter them
                  on this device in meme_desk_secrets.json) or set DESK_AI_KEY / DESK_SOL_RPC / DESK_CG_KEY.
 Not financial advice. Trending, boosted and brand-new tokens are frequently scams.
 """
-import calendar, hmac, json, math, os, re, secrets as pysecrets, shutil, signal, socket, statistics
+import base64, calendar, hmac, json, math, os, re, secrets as pysecrets, shutil, signal, socket, statistics
 import sys, threading, time, urllib.error, urllib.parse, urllib.request
 from collections import OrderedDict, defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "3.0.0"
 HOST = os.environ.get("DESK_HOST", "127.0.0.1")
-PORT = int(os.environ.get("DESK_PORT", "8765"))
+PORT = int(os.environ.get("PORT", os.environ.get("DESK_PORT", "8765")))
+PUBLIC_AUTH_USER = os.environ.get("DESK_USERNAME", "")
+PUBLIC_AUTH_PASSWORD = os.environ.get("DESK_PASSWORD", "")
 DATA_DIR = os.environ.get("DESK_DATA_DIR", os.getcwd())
 DS_BASE = os.environ.get("DESK_DS_BASE", "https://api.dexscreener.com")
 GT_BASE_FREE = os.environ.get("DESK_GT_BASE", "https://api.geckoterminal.com/api/v2")
@@ -2367,6 +2369,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def guard(self, fn):
         try:
+            path = urllib.parse.urlparse(self.path).path
+            if path == "/healthz" and self.command == "GET":
+                return self.send(200, {"ok": True, "service": "meme-desk-live"})
+            if HOST not in ("127.0.0.1", "localhost", "::1"):
+                auth = self.headers.get("Authorization", "")
+                valid = False
+                if auth.startswith("Basic "):
+                    try:
+                        raw = base64.b64decode(auth[6:], validate=True).decode("utf-8")
+                        user, password = raw.split(":", 1)
+                        valid = hmac.compare_digest(user, PUBLIC_AUTH_USER) and hmac.compare_digest(password, PUBLIC_AUTH_PASSWORD)
+                    except Exception:
+                        valid = False
+                if not valid:
+                    return self.send(401, {"error": "Authentication required"}, extra={"WWW-Authenticate": 'Basic realm="Meme Desk Live", charset="UTF-8"'})
             if not self.host_ok():
                 return self.send(403, {"error": "Forbidden host"})
             fn()
@@ -2554,7 +2571,10 @@ def request_shutdown():
 def main():
     global _server
     if HOST not in ("127.0.0.1", "localhost", "::1"):
-        print("WARNING: binding to %s exposes this dashboard to your network. It has no login. Use 127.0.0.1." % HOST)
+        if not PUBLIC_AUTH_USER or len(PUBLIC_AUTH_PASSWORD) < 12:
+            print("SECURITY ERROR: public hosting requires DESK_USERNAME and DESK_PASSWORD (at least 12 characters).")
+            return 2
+        print("Public bind enabled with HTTP Basic Authentication.")
     load_config()
     save_config()
     load_state()
