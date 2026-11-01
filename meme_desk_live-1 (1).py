@@ -839,6 +839,65 @@ def tr_payload(tr):
             "possible_coordinated_buying_clusters": len(tr["cluster_buys"]), "possible_coordinated_selling_clusters": len(tr["cluster_sells"]), "caveat": tr["caveat"]}
 
 
+def local_ai_result(kind, key=None):
+    """Transparent, offline Python analyst built from this app's measured agents; not an LLM."""
+    if kind == "coin":
+        with LOCK:
+            c = S["coins"].get(key)
+            if not c:
+                raise ApiError("Unknown coin: open it first", True)
+            a = analyse(c)
+            con = a["consensus"]
+            names = ("trend", "volume", "liquidity", "risk", "bot", "whale")
+            findings = [f for n in names for f in (a.get(n) or {}).get("findings", [])]
+            risks = [f.get("ev", "") for n in ("risk", "bot", "liquidity") for f in (a.get(n) or {}).get("findings", []) if f.get("dir") == "neg" and f.get("ev")]
+            positives = [f.get("ev", "") for n in ("trend", "volume", "whale") for f in (a.get(n) or {}).get("findings", []) if f.get("dir") == "pos" and f.get("ev")]
+            missing = sorted({m for n in names for m in (a.get(n) or {}).get("missing", [])})
+            conclusion = con.get("conclusion", CONCL[3])
+            if conclusion not in CONCL: conclusion = CONCL[3]
+            level = (con.get("confidence") or {}).get("level", "low")
+            confidence = level if level in ("low", "medium", "high") else "low"
+            reasons = [x for x in (con.get("reasons") or []) if x]
+            invalidation = [x for x in (con.get("invalidation") or []) if x]
+            if not reasons: reasons = ["Local agent consensus: " + str(conclusion)]
+            if not invalidation: invalidation = ["Reassess when fresh price, volume or liquidity data changes."]
+            suspicious = (a.get("bot") or {}).get("summary", "Insufficient wallet-behaviour evidence.")
+            wallet = (a.get("whale") or {}).get("summary", "Wallet observations are limited to trades collected by this app.")
+            out = {"conclusion": conclusion, "confidence": confidence,
+                "scenario": "bullish" if conclusion == CONCL[0] else "bearish" if conclusion == CONCL[2] else "neutral",
+                "what_is_happening": "Offline Meme Desk analysis of " + c["sym"] + " using measured market snapshots and the six built-in Python agents. This is a rules-and-statistics engine, not a generative language model.",
+                "agreements": str(con.get("explain", "")), "market_trend": (a.get("trend") or {}).get("summary", ""),
+                "momentum_volume": (a.get("volume") or {}).get("summary", ""),
+                "liquidity_exit": (a.get("liquidity") or {}).get("summary", ""),
+                "wallet_activity": wallet, "suspicious": suspicious,
+                "positives": positives[:8], "negatives": risks[:8], "catalysts": [],
+                "risks": risks[:8], "missing": missing[:8],
+                "manipulation": [x for x in risks if any(w in x.lower() for w in ("bot", "cluster", "coordinat", "wash", "suspicious"))][:8],
+                "scenario_reasoning": "Conclusion is inherited from the existing consensus engine; no future price is predicted.",
+                "confidence_explanation": "Local confidence is based on data coverage and agent agreement, not calibrated win probability.",
+                "reasons": reasons[:8], "invalidation": invalidation[:8]}
+            sym, data_ts = c["sym"], c["updated"]
+    else:
+        with LOCK:
+            o = S.get("overview")
+            if not o or o.get("n", 0) < 1: raise ApiError("No monitored market data yet", True)
+            regime = o.get("regime", "insufficient")
+            conclusion = CONCL[0] if regime == "bullish" else CONCL[2] if regime == "bearish" else CONCL[1] if regime == "sideways" else CONCL[3]
+            out = {"conclusion": conclusion, "confidence": "low" if regime == "insufficient" else "medium",
+                "regime": regime if regime in ("bullish", "bearish", "sideways") else "unclear",
+                "regime_reason": o.get("why", "Insufficient breadth data."),
+                "bullish": ["Rising tokens: %s" % o.get("rise_h1", 0)],
+                "bearish": ["Falling tokens: %s" % o.get("fall_h1", 0)],
+                "risks": ["This is a monitored sample, not the entire crypto market."],
+                "missing": ["News and fundamentals are not interpreted by the offline engine."],
+                "uncertainty": "Rule-based snapshot; not a forecast.",
+                "reasons": [o.get("why", "Insufficient data.")],
+                "invalidation": ["Re-evaluate after the next fresh market snapshots."]}
+            sym, data_ts = "MARKET", o["ts"]
+    return out, sym, data_ts
+
+
+
 def run_ai(kind, key=None):
     if not ai_configured():
         raise ApiError("AI API NOT CONFIGURED", True)
@@ -864,9 +923,13 @@ def run_ai(kind, key=None):
             data_ts, sym, system = o["ts"], "MARKET", AI_SYSTEM_MARKET
         S["ai"]["busy"] = True
     t0 = time.time()
+    local_mode = not bool(secret("ai_key"))
     try:
-        raw = parse_ai_json(ai_request(system, json.dumps(clean(payload))))
-        out = validate_coin_ai(raw) if kind == "coin" else validate_market_ai(raw)
+        if local_mode:
+            out, sym, data_ts = local_ai_result(kind, key)
+        else:
+            raw = parse_ai_json(ai_request(system, json.dumps(clean(payload))))
+            out = validate_coin_ai(raw) if kind == "coin" else validate_market_ai(raw)
     except ApiError as e:
         with LOCK:
             a = S["agents"].setdefault("ai", {"runs": 0, "errors": 0, "last_run": 0, "last_ms": 0, "last_error": None, "status": "idle", "cerr": 0})
@@ -881,7 +944,7 @@ def run_ai(kind, key=None):
     ms = int((time.time() - t0) * 1000)
     with LOCK:
         S["ai"]["seq"] += 1
-        out.update(id=S["ai"]["seq"], kind=kind, key=key, sym=sym, analyzed_at=time.time(), data_ts=data_ts, ms=ms, provider=S["settings"]["ai_provider"], model=S["settings"]["ai_model"])
+        out.update(id=S["ai"]["seq"], kind=kind, key=key, sym=sym, analyzed_at=time.time(), data_ts=data_ts, ms=ms, provider=("built-in-python" if local_mode else S["settings"]["ai_provider"]), model=("MemeDesk-Local-Analyst-v1" if local_mode else S["settings"]["ai_model"]))
         S["ai"]["error"] = None
         if kind == "coin":
             S["ai"]["coins"][key] = out
